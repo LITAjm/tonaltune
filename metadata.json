@@ -1,0 +1,5 @@
+{
+  "name": "Articulatory Coach",
+  "description": "A pronunciation training application with real-time articulatory feedback.",
+  "requestFramePermissions": ["microphone"]
+}
