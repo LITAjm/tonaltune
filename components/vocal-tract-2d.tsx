@@ -53,7 +53,7 @@ export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTrac
     }
   }, [f1, f2, isActive]);
 
-  const currentJawRef = useRef<SVGPathElement>(null);
+  const currentJawRef = useRef<SVGGElement>(null);
 
   // Map F1 to jaw drop distance (0 to 15 units of extra drop)
   const calculateJawDrop = (currentF1: number) => {

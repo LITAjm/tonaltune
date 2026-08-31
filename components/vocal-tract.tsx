@@ -122,7 +122,7 @@ function Scene({ f1, f2, targetF1, targetF2, isActive }: VocalTractProps) {
       {/* Current Tongue - Solid / Wireframe blend */}
       <DynamicTongue
         f1={displayF1} f2={displayF2}
-        color={0x10b981} opacity={0.6}
+        color={0x10b981} opacity={0.9}
         wireframe={false} isTarget={false}
       />
       <DynamicTongue
@@ -131,8 +131,9 @@ function Scene({ f1, f2, targetF1, targetF2, isActive }: VocalTractProps) {
         wireframe={true} isTarget={false}
       />
 
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[10, 10, 10]} intensity={1} />
+      <ambientLight intensity={0.8} />
+      <directionalLight position={[10, 10, 10]} intensity={1.5} />
+      <directionalLight position={[-10, 5, -10]} intensity={0.5} color={0x6366f1} />
     </group>
   );
 }

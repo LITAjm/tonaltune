@@ -14,24 +14,24 @@ export const MINIMAL_PAIRS = [
     id: 'i-I',
     label: '/iː/ vs /ɪ/',
     phonemes: [
-      { symbol: 'iː', word: 'fleece', f1: 300, f2: 2200, description: 'High front, unrounded. Tongue tense and forward.' },
-      { symbol: 'ɪ', word: 'kit', f1: 400, f2: 1800, description: 'Mid-high front, unrounded. Tongue relaxed.' },
+      { symbol: 'iː', word: 'fleece', f1: 300, f2: 2200, description: 'High front, unrounded. Tongue tense and forward.', somatosensoryCue: 'You should feel the sides of your tongue pressing lightly against your upper back teeth.' },
+      { symbol: 'ɪ', word: 'kit', f1: 400, f2: 1800, description: 'Mid-high front, unrounded. Tongue relaxed.', somatosensoryCue: 'Your tongue should feel relaxed, dropping slightly away from the roof of your mouth compared to /i:/.' },
     ]
   },
   {
     id: 'ae-v',
     label: '/æ/ vs /ʌ/',
     phonemes: [
-      { symbol: 'æ', word: 'trap', f1: 700, f2: 1600, description: 'Low front, unrounded. Jaw open.' },
-      { symbol: 'ʌ', word: 'strut', f1: 600, f2: 1200, description: 'Mid-low central, unrounded. Jaw relaxed.' },
+      { symbol: 'æ', word: 'trap', f1: 700, f2: 1600, description: 'Low front, unrounded. Jaw open.', somatosensoryCue: 'Feel your jaw drop low and your tongue push forward toward your bottom teeth.' },
+      { symbol: 'ʌ', word: 'strut', f1: 600, f2: 1200, description: 'Mid-low central, unrounded. Jaw relaxed.', somatosensoryCue: 'Your tongue should feel completely neutral and relaxed in the center of your mouth.' },
     ]
   },
   {
     id: 'e-ei',
     label: '/e/ vs /eɪ/',
     phonemes: [
-      { symbol: 'e', word: 'dress', f1: 500, f2: 1800, description: 'Mid front, unrounded. Relaxed.' },
-      { symbol: 'eɪ', word: 'face', f1: 400, f2: 2000, description: 'Diphthong. Starts mid-front, glides high-front.' },
+      { symbol: 'e', word: 'dress', f1: 500, f2: 1800, description: 'Mid front, unrounded. Relaxed.', somatosensoryCue: 'Feel the sides of your tongue gently touching your upper side teeth.' },
+      { symbol: 'eɪ', word: 'face', f1: 400, f2: 2000, description: 'Diphthong. Starts mid-front, glides high-front.', somatosensoryCue: 'Feel your jaw close slightly as your tongue slides upward and forward.' },
     ]
   },
   {
@@ -257,20 +257,36 @@ export function PronunciationCoach() {
     requestAnimationFrame(animate);
   };
 
-  // Gamification Loop
+  // Gamification Loop - Score and Active Time tracking
+  // We use Refs for currentF1 and currentF2 to avoid constantly re-running the effect
+  const f1Ref = useRef(currentF1);
+  const f2Ref = useRef(currentF2);
+  const displayTargetRef = useRef(displayTarget);
+
+  useEffect(() => {
+    f1Ref.current = currentF1;
+    f2Ref.current = currentF2;
+    displayTargetRef.current = displayTarget;
+  }, [currentF1, currentF2, displayTarget]);
+
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
     if ((isRecording && isSpeaking) || (debugMode && !isPlayingNative)) {
       interval = setInterval(() => {
         // Add to active time (points for trying)
-        setActiveTime(prev => prev + 0.1);
+        setActiveTime(prev => {
+           const nextTime = prev + 0.1;
+           // Every 1 second of active time, add a point
+           if (Math.floor(nextTime) > Math.floor(prev)) {
+               setScore(s => s + 1);
+           }
+           return nextTime;
+        });
 
-        // Every 1 second of active time, add a point
-        setScore(prev => prev + 1);
-
-        const f1Diff = currentF1 - displayTarget.f1;
-        const f2Diff = currentF2 - displayTarget.f2;
+        const currentTarget = displayTargetRef.current;
+        const f1Diff = f1Ref.current - currentTarget.f1;
+        const f2Diff = f2Ref.current - currentTarget.f2;
         const threshold = 150;
 
         const isTargetHit = Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5;
@@ -297,7 +313,7 @@ export function PronunciationCoach() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRecording, isSpeaking, debugMode, currentF1, currentF2, activePhoneme, isPlayingNative]);
+  }, [isRecording, isSpeaking, debugMode, isPlayingNative]);
 
 
   useEffect(() => {
@@ -628,6 +644,13 @@ export function PronunciationCoach() {
             <div className="text-slate-500 font-medium flex items-center gap-2">
               as in <span className="text-slate-800 font-bold">&quot;{activePhoneme.word}&quot;</span>
             </div>
+
+            {activePhoneme.somatosensoryCue && (
+               <div className="mt-4 px-4 py-2 bg-indigo-50 border border-indigo-100 rounded-lg text-sm text-indigo-800 text-center max-w-sm">
+                 <span className="font-semibold block mb-1">Feel it here:</span>
+                 {activePhoneme.somatosensoryCue}
+               </div>
+            )}
 
             <div className="flex items-center gap-2 mt-4">
               <button
