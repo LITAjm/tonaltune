@@ -70,12 +70,43 @@ export const MINIMAL_PAIRS = [
 
 export function PronunciationCoach() {
   const [activePair, setActivePair] = useState(MINIMAL_PAIRS[0]);
-  const [activePhoneme, setActivePhoneme] = useState(MINIMAL_PAIRS[0].phonemes[0]);
+  const [activePhoneme, setActivePhoneme] = useState<{
+    symbol: string;
+    word: string;
+    f1: number;
+    f2: number;
+    description: string;
+    somatosensoryCue?: string;
+  }>(MINIMAL_PAIRS[0].phonemes[0]);
   
   const [isRecording, setIsRecording] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPlayingNative, setIsPlayingNative] = useState(false);
+  const [isGlideMode, setIsGlideMode] = useState(false);
+  const [isExaggerateMode, setIsExaggerateMode] = useState(false);
+
+  // Custom target state (overrides activePhoneme when gliding, exaggerating, or custom words)
+  const [displayTarget, setDisplayTarget] = useState({ f1: MINIMAL_PAIRS[0].phonemes[0].f1, f2: MINIMAL_PAIRS[0].phonemes[0].f2 });
+
+  useEffect(() => {
+    // Keep display target in sync with active phoneme unless we are actively gliding
+    if (!isGlideMode) {
+      if (isExaggerateMode) {
+        // Exaggerate mode pushes the target 20% further from neutral center (F1: 500, F2: 1500)
+        const centerF1 = 500;
+        const centerF2 = 1500;
+        const pushFactor = 1.2;
+
+        setDisplayTarget({
+          f1: centerF1 + (activePhoneme.f1 - centerF1) * pushFactor,
+          f2: centerF2 + (activePhoneme.f2 - centerF2) * pushFactor
+        });
+      } else {
+        setDisplayTarget({ f1: activePhoneme.f1, f2: activePhoneme.f2 });
+      }
+    }
+  }, [activePhoneme, isGlideMode, isExaggerateMode]);
   
   // Audio Recording State
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
@@ -91,9 +122,111 @@ export function PronunciationCoach() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiResult, setAiResult] = useState<any>(null);
 
+  // Custom Word State (OpenRouter)
+  const [customWord, setCustomWord] = useState('');
+  const [isAnalyzingCustomWord, setIsAnalyzingCustomWord] = useState(false);
+  const [customWordData, setCustomWordData] = useState<{
+    syllables: string[];
+    intonation: string;
+  } | null>(null);
+
   // Current estimated formants (simulated or debug)
   const [currentF1, setCurrentF1] = useState(500);
   const [currentF2, setCurrentF2] = useState(1500);
+
+  // Gamification state
+  const [score, setScore] = useState(0);
+  const [activeTime, setActiveTime] = useState(0);
+  const [lockInTime, setLockInTime] = useState(0);
+  const [isLockedIn, setIsLockedIn] = useState(false);
+
+  // Shared AudioContext for synthesized sounds to prevent exhaustion
+  const synthAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const getSynthAudioContext = () => {
+    if (!synthAudioCtxRef.current) {
+      synthAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    // Resume context if it was suspended (browser autoplay policy)
+    if (synthAudioCtxRef.current.state === 'suspended') {
+      synthAudioCtxRef.current.resume();
+    }
+    return synthAudioCtxRef.current;
+  };
+
+  const playChime = () => {
+    try {
+      const audioCtx = getSynthAudioContext();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+      oscillator.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.1); // Glide to A6
+
+      gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 1.5);
+    } catch (e) {
+      console.error("Could not play chime", e);
+    }
+  };
+
+  const startGlideMode = () => {
+    if (isGlideMode || isRecording) return;
+    setIsGlideMode(true);
+
+    // Anchor sound: Neutral Schwa /ə/
+    const anchorF1 = 500;
+    const anchorF2 = 1500;
+
+    // Set immediate target to anchor
+    setDisplayTarget({ f1: anchorF1, f2: anchorF2 });
+
+    const duration = 4000; // 4 seconds to glide
+    const startTime = Date.now();
+
+    const animate = () => {
+      const now = Date.now();
+      const progress = Math.min(1, (now - startTime) / duration);
+
+      // Easing function (smooth step)
+      const ease = progress * progress * (3 - 2 * progress);
+
+      // We need to glide to the effective target (which might be exaggerated)
+      let finalTargetF1 = activePhoneme.f1;
+      let finalTargetF2 = activePhoneme.f2;
+
+      if (isExaggerateMode) {
+        const centerF1 = 500;
+        const centerF2 = 1500;
+        const pushFactor = 1.2;
+        finalTargetF1 = centerF1 + (activePhoneme.f1 - centerF1) * pushFactor;
+        finalTargetF2 = centerF2 + (activePhoneme.f2 - centerF2) * pushFactor;
+      }
+
+      const nextF1 = anchorF1 + (finalTargetF1 - anchorF1) * ease;
+      const nextF2 = anchorF2 + (finalTargetF2 - anchorF2) * ease;
+
+      setDisplayTarget({ f1: nextF1, f2: nextF2 });
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        setTimeout(() => setIsGlideMode(false), 2000); // Wait 2s at the end before returning to normal
+      }
+    };
+
+    // Give them 1 second to find the anchor, then start gliding
+    setTimeout(() => {
+      requestAnimationFrame(animate);
+    }, 1000);
+  };
 
   const playNativeExample = () => {
     if (isPlayingNative) return;
@@ -123,6 +256,49 @@ export function PronunciationCoach() {
 
     requestAnimationFrame(animate);
   };
+
+  // Gamification Loop
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+
+    if ((isRecording && isSpeaking) || (debugMode && !isPlayingNative)) {
+      interval = setInterval(() => {
+        // Add to active time (points for trying)
+        setActiveTime(prev => prev + 0.1);
+
+        // Every 1 second of active time, add a point
+        setScore(prev => prev + 1);
+
+        const f1Diff = currentF1 - displayTarget.f1;
+        const f2Diff = currentF2 - displayTarget.f2;
+        const threshold = 150;
+
+        const isTargetHit = Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5;
+
+        if (isTargetHit) {
+          setLockInTime(prev => {
+            const nextTime = prev + 0.1;
+            if (nextTime >= 3.0 && prev < 3.0) { // Hit 3 seconds!
+              setIsLockedIn(true);
+              playChime();
+              setScore(s => s + 50); // Bonus points for lock-in
+              setTimeout(() => setIsLockedIn(false), 2000); // Reset visual lock-in state after 2s
+            }
+            return nextTime;
+          });
+        } else {
+          setLockInTime(0);
+        }
+      }, 100);
+    } else {
+      setLockInTime(0);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isRecording, isSpeaking, debugMode, currentF1, currentF2, activePhoneme, isPlayingNative]);
+
 
   useEffect(() => {
     if (isPlayingNative) return; // Ignore input while playing example
@@ -165,9 +341,12 @@ export function PronunciationCoach() {
 
   // Generate real-time feedback based on current formants vs target
   let feedback = 'Press record and speak the word to start practicing.';
-  if (debugMode) {
-    const f1Diff = currentF1 - activePhoneme.f1;
-    const f2Diff = currentF2 - activePhoneme.f2;
+
+  if (isGlideMode) {
+    feedback = 'Start with the neutral "uh" sound, and slowly follow the ghost tongue to the target position.';
+  } else if (debugMode) {
+    const f1Diff = currentF1 - displayTarget.f1;
+    const f2Diff = currentF2 - displayTarget.f2;
     const threshold = 100;
     if (Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5) {
       feedback = 'Excellent! Hold that position.';
@@ -184,8 +363,8 @@ export function PronunciationCoach() {
     if (!isSpeaking) {
       feedback = 'Listening... Speak the target word clearly.';
     } else {
-      const f1Diff = currentF1 - activePhoneme.f1;
-      const f2Diff = currentF2 - activePhoneme.f2;
+      const f1Diff = currentF1 - displayTarget.f1;
+      const f2Diff = currentF2 - displayTarget.f2;
       const threshold = 150; // Slightly wider threshold for real audio
       
       if (Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5) {
@@ -334,11 +513,105 @@ export function PronunciationCoach() {
     }
   };
 
+  const analyzeCustomWord = async () => {
+    if (!customWord.trim()) return;
+
+    setIsAnalyzingCustomWord(true);
+    setCustomWordData(null);
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ word: customWord })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.error || "Failed to analyze word. Please try again.");
+        return;
+      }
+
+      // Update the active phoneme with the new custom data
+      setActivePhoneme({
+        symbol: data.symbol,
+        word: customWord,
+        f1: data.f1,
+        f2: data.f2,
+        description: data.description,
+        somatosensoryCue: data.somatosensoryCue
+      });
+
+      // Set the custom data (syllables, intonation)
+      setCustomWordData({
+        syllables: data.syllables,
+        intonation: data.intonation
+      });
+
+    } catch (error) {
+      console.error("Error analyzing custom word:", error);
+      alert("An unexpected error occurred. Please try again.");
+    } finally {
+      setIsAnalyzingCustomWord(false);
+    }
+  };
+
+  const playIntonationHum = () => {
+    if (!customWordData?.intonation) return;
+
+    try {
+      const audioCtx = getSynthAudioContext();
+      let startTime = audioCtx.currentTime;
+      const syllables = customWordData.intonation.split('-');
+
+      syllables.forEach((syl) => {
+        const isStressed = syl === syl.toUpperCase() && syl.length > 0;
+        const duration = isStressed ? 0.4 : 0.2;
+        const freq = isStressed ? 330 : 220; // E4 (stressed) vs A3 (unstressed)
+
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(freq, startTime);
+
+        // Smooth envelope
+        gainNode.gain.setValueAtTime(0, startTime);
+        gainNode.gain.linearRampToValueAtTime(0.3, startTime + 0.05);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration);
+
+        startTime += duration + 0.05; // Gap between syllables
+      });
+    } catch (e) {
+      console.error("Could not play intonation", e);
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* Left Column: Controls & Target */}
       <div className="lg:col-span-4 space-y-6">
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+          {/* Gamification Scoreboard */}
+          <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-500" />
+              <span className="font-bold text-slate-700">Score: {score}</span>
+            </div>
+            <div className="text-sm font-medium text-slate-500">
+              Active Time: {Math.floor(activeTime / 60)}:{(Math.floor(activeTime % 60)).toString().padStart(2, '0')}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-slate-800">Target Sound</h2>
             <button 
@@ -356,18 +629,46 @@ export function PronunciationCoach() {
               as in <span className="text-slate-800 font-bold">&quot;{activePhoneme.word}&quot;</span>
             </div>
 
-            <button
-              onClick={playNativeExample}
-              disabled={isPlayingNative || isRecording}
-              className={`mt-4 px-4 py-2 rounded-full flex items-center gap-2 text-sm font-medium transition-colors ${
-                isPlayingNative
-                  ? 'bg-indigo-100 text-indigo-700 cursor-not-allowed'
-                  : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-800'
-              }`}
-            >
-              <Volume2 className="w-4 h-4" />
-              {isPlayingNative ? 'Playing...' : 'Play Native Example'}
-            </button>
+            <div className="flex items-center gap-2 mt-4">
+              <button
+                onClick={playNativeExample}
+                disabled={isPlayingNative || isRecording}
+                className={`px-4 py-2 rounded-full flex items-center gap-2 text-sm font-medium transition-colors ${
+                  isPlayingNative
+                    ? 'bg-indigo-100 text-indigo-700 cursor-not-allowed'
+                    : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-800'
+                }`}
+              >
+                <Volume2 className="w-4 h-4" />
+                {isPlayingNative ? 'Playing...' : 'Play Native Example'}
+              </button>
+
+              <button
+                onClick={startGlideMode}
+                disabled={isGlideMode || isRecording}
+                className={`px-4 py-2 rounded-full flex items-center gap-2 text-sm font-medium transition-colors ${
+                  isGlideMode
+                    ? 'bg-purple-100 text-purple-700 cursor-not-allowed'
+                    : 'bg-purple-50 text-purple-600 hover:bg-purple-100 hover:text-purple-800'
+                }`}
+              >
+                <RefreshCw className={`w-4 h-4 ${isGlideMode ? 'animate-spin' : ''}`} />
+                {isGlideMode ? 'Gliding...' : 'Anchor & Glide'}
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3 bg-rose-50 border border-rose-100 p-3 rounded-xl">
+              <div className="flex-1">
+                <h4 className="text-sm font-semibold text-rose-800">Over-Exaggeration Mode</h4>
+                <p className="text-xs text-rose-600">Forces you to stretch past the target to break habits.</p>
+              </div>
+              <button
+                onClick={() => setIsExaggerateMode(!isExaggerateMode)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isExaggerateMode ? 'bg-rose-500' : 'bg-slate-300'}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isExaggerateMode ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
 
             <p className="text-xs text-slate-400 mt-4 text-center px-4">
               {activePhoneme.description}
@@ -401,6 +702,7 @@ export function PronunciationCoach() {
                   key={p.symbol}
                   onClick={() => {
                     setActivePhoneme(p);
+                    setCustomWordData(null); // Clear custom data when picking a standard pair
                     if (!isRecording && !debugMode) {
                       setCurrentF1(p.f1 + (Math.random() > 0.5 ? 200 : -200));
                       setCurrentF2(p.f2 + (Math.random() > 0.5 ? 400 : -400));
@@ -416,6 +718,54 @@ export function PronunciationCoach() {
                 </button>
               ))}
             </div>
+
+            {/* Custom Word Entry */}
+            <div className="mt-6 border-t border-slate-100 pt-6">
+              <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">Or Analyze a Custom Word</h3>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. phenomenal"
+                  value={customWord}
+                  onChange={(e) => setCustomWord(e.target.value)}
+                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  onKeyDown={(e) => e.key === 'Enter' && analyzeCustomWord()}
+                />
+                <button
+                  onClick={analyzeCustomWord}
+                  disabled={isAnalyzingCustomWord || !customWord.trim()}
+                  className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-900 disabled:opacity-50 flex items-center justify-center min-w-[80px]"
+                >
+                  {isAnalyzingCustomWord ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Analyze'}
+                </button>
+              </div>
+            </div>
+
+            {/* Syllable and Intonation Display for Custom Word */}
+            {customWordData && (
+              <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Structure & Rhythm</h4>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {customWordData.syllables.map((syl, i) => (
+                    <span key={i} className="px-2 py-1 bg-white border border-slate-200 rounded text-slate-700 text-sm font-medium shadow-sm">
+                      {syl}
+                    </span>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-indigo-700 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+                    {customWordData.intonation}
+                  </div>
+                  <button
+                    onClick={playIntonationHum}
+                    className="p-1.5 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition-colors"
+                    title="Play Intonation Melody"
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -493,21 +843,40 @@ export function PronunciationCoach() {
       {/* Right Column: Visualizations & AI Feedback */}
       <div className="lg:col-span-8 space-y-6">
         {/* Real-time Feedback Banner */}
-        <div className={`p-4 rounded-xl border flex items-start gap-4 transition-colors ${
-          feedback.includes('Excellent') 
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
-            : isRecording || debugMode
-              ? 'bg-blue-50 border-blue-200 text-blue-800'
-              : 'bg-slate-50 border-slate-200 text-slate-600'
+        <div className={`p-4 rounded-xl border flex items-start gap-4 transition-colors relative overflow-hidden ${
+          isLockedIn
+            ? 'bg-green-100 border-green-400 text-green-900 shadow-inner'
+            : feedback.includes('Excellent')
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : isRecording || debugMode
+                ? 'bg-blue-50 border-blue-200 text-blue-800'
+                : 'bg-slate-50 border-slate-200 text-slate-600'
         }`}>
-          <div className={`p-2 rounded-full ${
-            feedback.includes('Excellent') ? 'bg-emerald-100' : isRecording || debugMode ? 'bg-blue-100' : 'bg-slate-200'
+          {/* Lock-in Progress Bar */}
+          {(isRecording || debugMode) && feedback.includes('Excellent') && !isLockedIn && (
+             <div
+               className="absolute bottom-0 left-0 h-1 bg-emerald-400 transition-all duration-100 ease-linear"
+               style={{ width: `${Math.min(100, (lockInTime / 3) * 100)}%` }}
+             />
+          )}
+
+          <div className={`p-2 rounded-full relative z-10 ${
+            isLockedIn ? 'bg-green-200' : feedback.includes('Excellent') ? 'bg-emerald-100' : isRecording || debugMode ? 'bg-blue-100' : 'bg-slate-200'
           }`}>
-            <Activity className={`w-5 h-5 ${isRecording && !feedback.includes('Excellent') ? 'animate-pulse' : ''}`} />
+            <Activity className={`w-5 h-5 ${isRecording && !feedback.includes('Excellent') ? 'animate-pulse' : ''} ${isLockedIn ? 'animate-bounce text-green-600' : ''}`} />
           </div>
-          <div>
-            <h3 className="font-semibold mb-1">Real-time Formant Feedback</h3>
-            <p className="text-sm opacity-90">{feedback}</p>
+          <div className="relative z-10 flex-1">
+            <div className="flex justify-between items-center">
+              <h3 className="font-semibold mb-1">
+                {isLockedIn ? "Perfect Lock-In! +50 Points" : "Real-time Formant Feedback"}
+              </h3>
+              {feedback.includes('Excellent') && !isLockedIn && (
+                 <span className="text-xs font-bold bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full animate-pulse">
+                   Hold: {Math.max(0, 3 - lockInTime).toFixed(1)}s
+                 </span>
+              )}
+            </div>
+            <p className="text-sm opacity-90">{isLockedIn ? "Awesome muscle control!" : feedback}</p>
           </div>
         </div>
 
@@ -520,8 +889,8 @@ export function PronunciationCoach() {
               <VocalTract2D
                 f1={currentF1}
                 f2={currentF2}
-                targetF1={activePhoneme.f1}
-                targetF2={activePhoneme.f2}
+                targetF1={displayTarget.f1}
+                targetF2={displayTarget.f2}
                 isActive={isRecording || debugMode || isPlayingNative}
               />
             </div>
@@ -537,8 +906,8 @@ export function PronunciationCoach() {
               <VocalTract 
                 f1={currentF1} 
                 f2={currentF2} 
-                targetF1={activePhoneme.f1}
-                targetF2={activePhoneme.f2}
+                targetF1={displayTarget.f1}
+                targetF2={displayTarget.f2}
                 isActive={isRecording || debugMode || isPlayingNative}
               />
             </div>
@@ -552,8 +921,8 @@ export function PronunciationCoach() {
             <h2 className="text-lg font-semibold text-slate-800 mb-4">Acoustic Space (F1/F2)</h2>
             <div className="flex-1 min-h-[300px] relative">
               <VowelQuadrilateral
-                targetF1={activePhoneme.f1}
-                targetF2={activePhoneme.f2}
+                targetF1={displayTarget.f1}
+                targetF2={displayTarget.f2}
                 currentF1={currentF1}
                 currentF2={currentF2}
                 isActive={isRecording || debugMode || isPlayingNative}

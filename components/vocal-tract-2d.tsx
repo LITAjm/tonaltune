@@ -53,6 +53,38 @@ export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTrac
     }
   }, [f1, f2, isActive]);
 
+  const currentJawRef = useRef<SVGPathElement>(null);
+
+  // Map F1 to jaw drop distance (0 to 15 units of extra drop)
+  const calculateJawDrop = (currentF1: number) => {
+    // Low F1 (e.g. 300) = jaw closed = 0 drop
+    // High F1 (e.g. 800) = jaw open = 15 drop
+    return Math.max(0, Math.min(15, ((currentF1 - 200) / 600) * 15));
+  };
+
+  useEffect(() => {
+    if (currentTongueRef.current && currentJawRef.current) {
+      const displayF1 = isActive ? f1 : 600;
+      const displayF2 = isActive ? f2 : 1500;
+
+      const newPath = calculatePath(displayF1, displayF2);
+      const jawDrop = calculateJawDrop(displayF1);
+
+      gsap.to(currentTongueRef.current, {
+        attr: { d: newPath },
+        duration: isActive ? 0.2 : 0.8,
+        ease: isActive ? "power2.out" : "elastic.out(1, 0.5)",
+      });
+
+      // Animate the lower jaw/teeth translating down
+      gsap.to(currentJawRef.current, {
+        y: jawDrop,
+        duration: isActive ? 0.2 : 0.8,
+        ease: isActive ? "power2.out" : "elastic.out(1, 0.5)",
+      });
+    }
+  }, [f1, f2, isActive]);
+
   return (
     <div className="w-full h-full relative bg-slate-50 flex items-center justify-center p-4">
       <svg viewBox="0 0 100 100" className="w-full h-full max-w-sm drop-shadow-sm">
@@ -74,9 +106,8 @@ export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTrac
           className="opacity-50"
         />
 
-        {/* Teeth */}
+        {/* Upper Teeth (Static) */}
         <path d="M 90,40 L 95,45 L 85,45 Z" fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" />
-        <path d="M 90,50 L 95,45 L 85,45 Z" fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" />
 
         {/* Target Tongue (Ghost) */}
         <path
@@ -96,6 +127,14 @@ export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTrac
           fill="url(#tongueGradient)"
           className="opacity-90"
         />
+
+        {/* Lower Jaw & Teeth (Animates based on F1) */}
+        <g ref={currentJawRef}>
+          {/* Lower Lip / Chin line */}
+          <path d="M 100,100 L 90,60 Q 90,55 95,50 Z" fill="#94a3b8" className="opacity-20" />
+          {/* Lower Teeth */}
+          <path d="M 90,50 L 95,45 L 85,45 Z" fill="#ffffff" stroke="#cbd5e1" strokeWidth="1" transform="translate(0, 5)" />
+        </g>
       </svg>
     </div>
   );
