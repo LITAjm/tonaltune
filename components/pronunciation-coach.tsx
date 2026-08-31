@@ -4,10 +4,11 @@ import { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, Settings2, RefreshCw, Volume2, Sparkles, Activity } from 'lucide-react';
 import { VowelQuadrilateral } from './vowel-quadrilateral';
 import { VocalTract } from './vocal-tract';
+import { VocalTract2D } from './vocal-tract-2d';
 import { WaveformVisualizer } from './waveform-visualizer';
 import { GoogleGenAI, Type } from '@google/genai';
 
-// Define the 10 target phonemes grouped by minimal pairs
+// Define target phonemes grouped by minimal pairs
 export const MINIMAL_PAIRS = [
   {
     id: 'i-I',
@@ -23,6 +24,22 @@ export const MINIMAL_PAIRS = [
     phonemes: [
       { symbol: 'æ', word: 'trap', f1: 700, f2: 1600, description: 'Low front, unrounded. Jaw open.' },
       { symbol: 'ʌ', word: 'strut', f1: 600, f2: 1200, description: 'Mid-low central, unrounded. Jaw relaxed.' },
+    ]
+  },
+  {
+    id: 'e-ei',
+    label: '/e/ vs /eɪ/',
+    phonemes: [
+      { symbol: 'e', word: 'dress', f1: 500, f2: 1800, description: 'Mid front, unrounded. Relaxed.' },
+      { symbol: 'eɪ', word: 'face', f1: 400, f2: 2000, description: 'Diphthong. Starts mid-front, glides high-front.' },
+    ]
+  },
+  {
+    id: 'o-ou',
+    label: '/ɒ/ vs /oʊ/',
+    phonemes: [
+      { symbol: 'ɒ', word: 'lot', f1: 700, f2: 1000, description: 'Low back, slightly rounded. Open jaw.' },
+      { symbol: 'oʊ', word: 'goat', f1: 400, f2: 900, description: 'Diphthong. Starts mid-back, glides high-back.' },
     ]
   },
   {
@@ -58,6 +75,7 @@ export function PronunciationCoach() {
   const [isRecording, setIsRecording] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPlayingNative, setIsPlayingNative] = useState(false);
   
   // Audio Recording State
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
@@ -66,7 +84,7 @@ export function PronunciationCoach() {
   
   // Real-time Audio Analysis Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   // AI Analysis State
@@ -77,70 +95,73 @@ export function PronunciationCoach() {
   const [currentF1, setCurrentF1] = useState(500);
   const [currentF2, setCurrentF2] = useState(1500);
 
-  // Simulation loop for "recording" mode (visuals only)
-  useEffect(() => {
-    let animationFrameId: number;
+  const playNativeExample = () => {
+    if (isPlayingNative) return;
+    setIsPlayingNative(true);
     
-    if (isRecording && !debugMode && analyserRef.current && audioCtxRef.current) {
-      const analyser = analyserRef.current;
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-      const sampleRate = audioCtxRef.current.sampleRate;
-      const binWidth = (sampleRate / 2) / bufferLength;
+    // Simulate a native speaker hitting the exact targets perfectly over time
+    // Neutral -> Target -> Neutral
+    const duration = 1500;
+    const startTime = Date.now();
 
-      const f1MinBin = Math.floor(200 / binWidth);
-      const f1MaxBin = Math.ceil(1000 / binWidth);
-      const f2MinBin = Math.floor(1000 / binWidth);
-      const f2MaxBin = Math.ceil(2500 / binWidth);
+    const animate = () => {
+      const now = Date.now();
+      const progress = (now - startTime) / duration;
 
-      const analyzeAudio = () => {
-        analyser.getByteFrequencyData(dataArray);
+      if (progress < 1) {
+        // Simple bell curve easing for entering and exiting the sound
+        const factor = Math.sin(progress * Math.PI);
+        setCurrentF1(500 + (activePhoneme.f1 - 500) * factor);
+        setCurrentF2(1500 + (activePhoneme.f2 - 1500) * factor);
+        requestAnimationFrame(animate);
+      } else {
+        setIsPlayingNative(false);
+        setCurrentF1(500);
+        setCurrentF2(1500);
+      }
+    };
 
-        // Calculate volume
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-        const avgVolume = sum / bufferLength;
+    requestAnimationFrame(animate);
+  };
 
-        if (avgVolume > 5) { // User is speaking
-          setIsSpeaking(true);
-          
-          // Find F1 peak
-          let maxF1Val = 0;
-          let maxF1Bin = f1MinBin;
-          for (let i = f1MinBin; i <= f1MaxBin; i++) {
-            if (dataArray[i] > maxF1Val) { maxF1Val = dataArray[i]; maxF1Bin = i; }
-          }
-          
-          // Find F2 peak
-          let maxF2Val = 0;
-          let maxF2Bin = f2MinBin;
-          for (let i = f2MinBin; i <= f2MaxBin; i++) {
-            if (dataArray[i] > maxF2Val) { maxF2Val = dataArray[i]; maxF2Bin = i; }
-          }
+  useEffect(() => {
+    if (isPlayingNative) return; // Ignore input while playing example
 
-          const targetF1Raw = maxF1Bin * binWidth;
-          const targetF2Raw = maxF2Bin * binWidth;
+    if (!isRecording || debugMode) {
+      if (!isRecording && !debugMode) {
+        // Drift back to neutral position when not recording or debugging
+        const drift = setInterval(() => {
+          setCurrentF1(prev => prev * 0.95 + 500 * 0.05);
+          setCurrentF2(prev => prev * 0.95 + 1500 * 0.05);
+        }, 50);
+        return () => clearInterval(drift);
+      }
+      return;
+    }
 
-          // Smooth the values heavily
-          setCurrentF1(prev => prev * 0.85 + targetF1Raw * 0.15);
-          setCurrentF2(prev => prev * 0.85 + targetF2Raw * 0.15);
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.onmessage = (event) => {
+        if (isPlayingNative) return; // Block input if example playing
+        const { isSpeaking, f1, f2, volume } = event.data;
+        setIsSpeaking(isSpeaking);
+
+        if (isSpeaking) {
+          setCurrentF1(f1);
+          setCurrentF2(f2);
         } else {
-          setIsSpeaking(false);
           // Drift back to neutral position if quiet
           setCurrentF1(prev => prev * 0.95 + 500 * 0.05);
           setCurrentF2(prev => prev * 0.95 + 1500 * 0.05);
         }
-        
-        animationFrameId = requestAnimationFrame(analyzeAudio);
       };
-      
-      analyzeAudio();
     }
     
     return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (workletNodeRef.current) {
+        workletNodeRef.current.port.onmessage = null;
+      }
     };
-  }, [isRecording, debugMode]);
+  }, [isRecording, debugMode, isPlayingNative]);
 
   // Generate real-time feedback based on current formants vs target
   let feedback = 'Press record and speak the word to start practicing.';
@@ -186,15 +207,17 @@ export function PronunciationCoach() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setMediaStream(stream);
       
-      // Set up real-time analysis
+      // Set up low latency real-time analysis via AudioWorklet
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
+      await audioCtx.audioWorklet.addModule('/worklets/formant-processor.js');
+
+      const workletNode = new AudioWorkletNode(audioCtx, 'formant-processor');
       const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
+      source.connect(workletNode);
+      // We don't connect workletNode to destination to prevent feedback loop
       
       audioCtxRef.current = audioCtx;
-      analyserRef.current = analyser;
+      workletNodeRef.current = workletNode;
       sourceRef.current = source;
 
       const recorder = new MediaRecorder(stream);
@@ -207,6 +230,10 @@ export function PronunciationCoach() {
 
       recorder.onstop = async () => {
         // Clean up audio context
+        if (workletNodeRef.current) {
+          workletNodeRef.current.port.onmessage = null;
+          workletNodeRef.current.disconnect();
+        }
         if (sourceRef.current) sourceRef.current.disconnect();
         if (audioCtxRef.current) audioCtxRef.current.close();
         
@@ -327,10 +354,21 @@ export function PronunciationCoach() {
             <div className="text-6xl font-serif text-indigo-600 mb-2">/{activePhoneme.symbol}/</div>
             <div className="text-slate-500 font-medium flex items-center gap-2">
               as in <span className="text-slate-800 font-bold">&quot;{activePhoneme.word}&quot;</span>
-              <button className="text-indigo-500 hover:text-indigo-700 transition-colors">
-                <Volume2 className="w-4 h-4" />
-              </button>
             </div>
+
+            <button
+              onClick={playNativeExample}
+              disabled={isPlayingNative || isRecording}
+              className={`mt-4 px-4 py-2 rounded-full flex items-center gap-2 text-sm font-medium transition-colors ${
+                isPlayingNative
+                  ? 'bg-indigo-100 text-indigo-700 cursor-not-allowed'
+                  : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-800'
+              }`}
+            >
+              <Volume2 className="w-4 h-4" />
+              {isPlayingNative ? 'Playing...' : 'Play Native Example'}
+            </button>
+
             <p className="text-xs text-slate-400 mt-4 text-center px-4">
               {activePhoneme.description}
             </p>
@@ -475,37 +513,54 @@ export function PronunciationCoach() {
 
         {/* Charts Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Vowel Quadrilateral */}
+          {/* 2D Cross Section */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col">
-            <h2 className="text-lg font-semibold text-slate-800 mb-4">Acoustic Space (F1/F2)</h2>
-            <div className="flex-1 min-h-[300px] relative">
-              <VowelQuadrilateral 
-                targetF1={activePhoneme.f1} 
+            <h2 className="text-lg font-semibold text-slate-800 mb-4">2D Cross-Section</h2>
+            <div className="flex-1 min-h-[300px] relative flex items-center justify-center bg-slate-50 rounded-xl overflow-hidden border border-slate-100">
+              <VocalTract2D
+                f1={currentF1}
+                f2={currentF2}
+                targetF1={activePhoneme.f1}
                 targetF2={activePhoneme.f2}
-                currentF1={currentF1}
-                currentF2={currentF2}
-                isActive={isRecording || debugMode}
+                isActive={isRecording || debugMode || isPlayingNative}
               />
             </div>
             <p className="text-xs text-slate-400 mt-4 text-center">
-              F1 (vertical) correlates with jaw openness. F2 (horizontal) correlates with tongue advancement.
+              Anatomical side profile of the tongue position.
             </p>
           </div>
 
-          {/* Vocal Tract */}
+          {/* 3D Vocal Tract */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col">
-            <h2 className="text-lg font-semibold text-slate-800 mb-4">Articulatory Estimation</h2>
+            <h2 className="text-lg font-semibold text-slate-800 mb-4">3D Articulatory Mesh</h2>
             <div className="flex-1 min-h-[300px] relative flex items-center justify-center bg-slate-50 rounded-xl overflow-hidden border border-slate-100">
               <VocalTract 
                 f1={currentF1} 
                 f2={currentF2} 
                 targetF1={activePhoneme.f1}
                 targetF2={activePhoneme.f2}
-                isActive={isRecording || debugMode}
+                isActive={isRecording || debugMode || isPlayingNative}
               />
             </div>
             <p className="text-xs text-slate-400 mt-4 text-center">
-              Estimated tongue position based on formant frequencies.
+              Organic deformation of the tongue surface based on formants.
+            </p>
+          </div>
+
+          {/* Vowel Quadrilateral */}
+          <div className="md:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col">
+            <h2 className="text-lg font-semibold text-slate-800 mb-4">Acoustic Space (F1/F2)</h2>
+            <div className="flex-1 min-h-[300px] relative">
+              <VowelQuadrilateral
+                targetF1={activePhoneme.f1}
+                targetF2={activePhoneme.f2}
+                currentF1={currentF1}
+                currentF2={currentF2}
+                isActive={isRecording || debugMode || isPlayingNative}
+              />
+            </div>
+            <p className="text-xs text-slate-400 mt-4 text-center">
+              F1 (vertical) correlates with jaw openness. F2 (horizontal) correlates with tongue advancement.
             </p>
           </div>
         </div>
