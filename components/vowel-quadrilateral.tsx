@@ -6,12 +6,12 @@ import { gsap } from 'gsap';
 interface VowelQuadrilateralProps {
   targetF1: number;
   targetF2: number;
-  currentF1: number;
-  currentF2: number;
+  f1Ref: React.RefObject<number>;
+  f2Ref: React.RefObject<number>;
   isActive: boolean;
 }
 
-export function VowelQuadrilateral({ targetF1, targetF2, currentF1, currentF2, isActive }: VowelQuadrilateralProps) {
+export function VowelQuadrilateral({ targetF1, targetF2, f1Ref, f2Ref, isActive }: VowelQuadrilateralProps) {
   const dotRef = useRef<SVGCircleElement>(null);
   const lineRef = useRef<SVGLineElement>(null);
   const pulseRef = useRef<SVGCircleElement>(null);
@@ -27,34 +27,38 @@ export function VowelQuadrilateral({ targetF1, targetF2, currentF1, currentF2, i
   const targetX = mapF2ToX(targetF2);
   const targetY = mapF1ToY(targetF1);
   
-  const currentX = mapF2ToX(currentF2);
-  const currentY = mapF1ToY(currentF1);
-
   useEffect(() => {
-    if (isActive) {
-      if (dotRef.current) {
-        gsap.to(dotRef.current, {
-          attr: { cx: `${currentX}%`, cy: `${currentY}%` },
-          duration: 0.4,
-          ease: "power2.out"
-        });
+    let animationFrameId: number;
+
+    const renderLoop = () => {
+      if (isActive && dotRef.current) {
+        const currentF1 = f1Ref.current || 500;
+        const currentF2 = f2Ref.current || 1500;
+
+        const currentX = mapF2ToX(currentF2);
+        const currentY = mapF1ToY(currentF1);
+
+        // Update attributes directly in render loop for low latency
+        dotRef.current.setAttribute('cx', `${currentX}%`);
+        dotRef.current.setAttribute('cy', `${currentY}%`);
+
+        if (pulseRef.current) {
+          pulseRef.current.setAttribute('cx', `${currentX}%`);
+          pulseRef.current.setAttribute('cy', `${currentY}%`);
+        }
+
+        if (lineRef.current) {
+          lineRef.current.setAttribute('x2', `${currentX}%`);
+          lineRef.current.setAttribute('y2', `${currentY}%`);
+        }
       }
-      if (pulseRef.current) {
-        gsap.to(pulseRef.current, {
-          attr: { cx: `${currentX}%`, cy: `${currentY}%` },
-          duration: 0.4,
-          ease: "power2.out"
-        });
-      }
-      if (lineRef.current) {
-        gsap.to(lineRef.current, {
-          attr: { x2: `${currentX}%`, y2: `${currentY}%` },
-          duration: 0.4,
-          ease: "power2.out"
-        });
-      }
-    }
-  }, [currentX, currentY, isActive]);
+      animationFrameId = requestAnimationFrame(renderLoop);
+    };
+
+    renderLoop();
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isActive, f1Ref, f2Ref]);
 
   // Pulse animation loop
   useEffect(() => {

@@ -7,8 +7,8 @@ import { OrbitControls, Wireframe } from '@react-three/drei';
 import { gsap } from 'gsap';
 
 interface VocalTractProps {
-  f1: number;
-  f2: number;
+  f1Ref: React.RefObject<number>;
+  f2Ref: React.RefObject<number>;
   targetF1: number;
   targetF2: number;
   isActive: boolean;
@@ -23,14 +23,10 @@ function Palate() {
   );
 }
 
-function DynamicTongue({ f1, f2, color, opacity, wireframe, isTarget }: { f1: number, f2: number, color: number, opacity: number, wireframe: boolean, isTarget: boolean }) {
+function DynamicTongue({ f1Ref, f2Ref, staticF1, staticF2, color, opacity, wireframe, isTarget }: { f1Ref?: React.RefObject<number>, f2Ref?: React.RefObject<number>, staticF1?: number, staticF2?: number, color: number, opacity: number, wireframe: boolean, isTarget: boolean }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const geoRef = useRef<THREE.PlaneGeometry>(null);
   const basePosRef = useRef<Float32Array | null>(null);
-
-  // We use GSAP to smoothly animate the current F1/F2 state.
-  // If it's the target mesh, we don't animate to it, we just display it.
-  const animatedStateRef = useRef({ f1: 500, f2: 1500 });
 
   useEffect(() => {
     if (geoRef.current && !basePosRef.current) {
@@ -38,29 +34,16 @@ function DynamicTongue({ f1, f2, color, opacity, wireframe, isTarget }: { f1: nu
     }
   }, []);
 
-  useEffect(() => {
-    if (isTarget) {
-       animatedStateRef.current.f1 = f1;
-       animatedStateRef.current.f2 = f2;
-    } else {
-       gsap.to(animatedStateRef.current, {
-         f1: f1,
-         f2: f2,
-         duration: 0.2, // Fast, low latency response
-         ease: "power2.out",
-       });
-    }
-  }, [f1, f2, isTarget]);
-
+  // For useFrame, we read directly from the Refs if provided, otherwise use static values
   useFrame(() => {
     if (!geoRef.current || !basePosRef.current) return;
     
     const positions = geoRef.current.attributes.position.array as Float32Array;
     const basePos = basePosRef.current;
     
-    // Deform based on animated F1/F2
-    const currentF1 = animatedStateRef.current.f1;
-    const currentF2 = animatedStateRef.current.f2;
+    // Read current formants
+    const currentF1 = (isTarget || !f1Ref) ? (staticF1 || 500) : (f1Ref.current || 500);
+    const currentF2 = (isTarget || !f2Ref) ? (staticF2 || 1500) : (f2Ref.current || 1500);
 
     const bumpHeight = 5.5 - (Math.max(0, Math.min(1, (currentF1 - 200) / 800))) * 5.0;
     const bumpX = -4.5 + (Math.max(0, Math.min(1, (currentF2 - 600) / 1900))) * 9;
@@ -93,7 +76,7 @@ function DynamicTongue({ f1, f2, color, opacity, wireframe, isTarget }: { f1: nu
   );
 }
 
-function Scene({ f1, f2, targetF1, targetF2, isActive }: VocalTractProps) {
+function Scene({ f1Ref, f2Ref, targetF1, targetF2, isActive }: VocalTractProps) {
   const sceneGroupRef = useRef<THREE.Group>(null);
 
   useFrame(({ clock }) => {
@@ -104,29 +87,25 @@ function Scene({ f1, f2, targetF1, targetF2, isActive }: VocalTractProps) {
     }
   });
 
-  // If not active, drift back to neutral
-  const displayF1 = isActive ? f1 : 600;
-  const displayF2 = isActive ? f2 : 1500;
-
   return (
     <group ref={sceneGroupRef}>
       <Palate />
 
       {/* Target Tongue - Ghost Wireframe */}
       <DynamicTongue
-        f1={targetF1} f2={targetF2}
+        staticF1={targetF1} staticF2={targetF2}
         color={0x6366f1} opacity={0.2}
         wireframe={true} isTarget={true}
       />
 
       {/* Current Tongue - Solid / Wireframe blend */}
       <DynamicTongue
-        f1={displayF1} f2={displayF2}
+        f1Ref={f1Ref} f2Ref={f2Ref}
         color={0x10b981} opacity={0.9}
         wireframe={false} isTarget={false}
       />
       <DynamicTongue
-        f1={displayF1} f2={displayF2}
+        f1Ref={f1Ref} f2Ref={f2Ref}
         color={0x059669} opacity={0.8}
         wireframe={true} isTarget={false}
       />

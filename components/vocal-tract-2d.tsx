@@ -4,14 +4,14 @@ import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
 
 interface VocalTract2DProps {
-  f1: number;
-  f2: number;
+  f1Ref: React.RefObject<number>;
+  f2Ref: React.RefObject<number>;
   targetF1: number;
   targetF2: number;
   isActive: boolean;
 }
 
-export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTract2DProps) {
+export function VocalTract2D({ f1Ref, f2Ref, targetF1, targetF2, isActive }: VocalTract2DProps) {
   const currentTongueRef = useRef<SVGPathElement>(null);
   const targetTongueRef = useRef<SVGPathElement>(null);
 
@@ -38,21 +38,6 @@ export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTrac
     }
   }, [targetF1, targetF2]);
 
-  useEffect(() => {
-    if (currentTongueRef.current) {
-      const displayF1 = isActive ? f1 : 600;
-      const displayF2 = isActive ? f2 : 1500;
-
-      const newPath = calculatePath(displayF1, displayF2);
-
-      gsap.to(currentTongueRef.current, {
-        attr: { d: newPath },
-        duration: isActive ? 0.2 : 0.8,
-        ease: isActive ? "power2.out" : "elastic.out(1, 0.5)",
-      });
-    }
-  }, [f1, f2, isActive]);
-
   const currentJawRef = useRef<SVGGElement>(null);
 
   // Map F1 to jaw drop distance (0 to 15 units of extra drop)
@@ -63,27 +48,51 @@ export function VocalTract2D({ f1, f2, targetF1, targetF2, isActive }: VocalTrac
   };
 
   useEffect(() => {
-    if (currentTongueRef.current && currentJawRef.current) {
-      const displayF1 = isActive ? f1 : 600;
-      const displayF2 = isActive ? f2 : 1500;
+    let animationFrameId: number;
 
-      const newPath = calculatePath(displayF1, displayF2);
-      const jawDrop = calculateJawDrop(displayF1);
+    const renderLoop = () => {
+      if (currentTongueRef.current && currentJawRef.current) {
+        if (isActive) {
+          // While active, we render directly for low-latency 60fps response
+          const displayF1 = f1Ref.current || 500;
+          const displayF2 = f2Ref.current || 1500;
 
-      gsap.to(currentTongueRef.current, {
-        attr: { d: newPath },
-        duration: isActive ? 0.2 : 0.8,
-        ease: isActive ? "power2.out" : "elastic.out(1, 0.5)",
-      });
+          const newPath = calculatePath(displayF1, displayF2);
+          const jawDrop = calculateJawDrop(displayF1);
 
-      // Animate the lower jaw/teeth translating down
-      gsap.to(currentJawRef.current, {
-        y: jawDrop,
-        duration: isActive ? 0.2 : 0.8,
-        ease: isActive ? "power2.out" : "elastic.out(1, 0.5)",
-      });
+          currentTongueRef.current.setAttribute('d', newPath);
+          currentJawRef.current.setAttribute('transform', `translate(0, ${jawDrop})`);
+
+          animationFrameId = requestAnimationFrame(renderLoop);
+        } else {
+          // When inactive, we use GSAP to smoothly animate back to the resting state.
+          const newPath = calculatePath(600, 1500);
+          const jawDrop = calculateJawDrop(600);
+
+          gsap.to(currentTongueRef.current, {
+            attr: { d: newPath },
+            duration: 0.8,
+            ease: "elastic.out(1, 0.5)",
+          });
+
+          gsap.to(currentJawRef.current, {
+            y: jawDrop,
+            duration: 0.8,
+            ease: "elastic.out(1, 0.5)",
+          });
+        }
+      }
+    };
+
+    if (isActive) {
+      renderLoop();
+    } else {
+      // Trigger the inactive return animation immediately when state changes
+      renderLoop();
     }
-  }, [f1, f2, isActive]);
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isActive, f1Ref, f2Ref]);
 
   return (
     <div className="w-full h-full relative bg-slate-50 flex items-center justify-center p-4">

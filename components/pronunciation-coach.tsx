@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Settings2, RefreshCw, Volume2, Sparkles, Activity } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Mic, MicOff, Settings2, RefreshCw, Volume2, Sparkles, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 import { VowelQuadrilateral } from './vowel-quadrilateral';
+import { motion, AnimatePresence } from 'motion/react';
 import { VocalTract } from './vocal-tract';
 import { VocalTract2D } from './vocal-tract-2d';
 import { WaveformVisualizer } from './waveform-visualizer';
@@ -82,12 +83,35 @@ export function PronunciationCoach() {
   const [isRecording, setIsRecording] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const isSpeakingRef = useRef(false);
   const [isPlayingNative, setIsPlayingNative] = useState(false);
   const [isGlideMode, setIsGlideMode] = useState(false);
   const [isExaggerateMode, setIsExaggerateMode] = useState(false);
 
+  // UI State
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+
+  // Calibration State
+  const [isCalibrated, setIsCalibrated] = useState(false);
+  const [showCalibrationModal, setShowCalibrationModal] = useState(false);
+  const [calibrationPhase, setCalibrationPhase] = useState<'idle' | 'recording_ahh' | 'recording_eee'>('idle');
+  const [userCalibration, setUserCalibration] = useState({
+    ahh: { f1: 800, f2: 1200 }, // Default rough expected values for /a/
+    eee: { f1: 300, f2: 2200 }  // Default rough expected values for /i/
+  });
+
   // Custom target state (overrides activePhoneme when gliding, exaggerating, or custom words)
   const [displayTarget, setDisplayTarget] = useState({ f1: MINIMAL_PAIRS[0].phonemes[0].f1, f2: MINIMAL_PAIRS[0].phonemes[0].f2 });
+
+  useEffect(() => {
+    const savedCalibration = localStorage.getItem('vocal_calibration');
+    if (savedCalibration) {
+      setUserCalibration(JSON.parse(savedCalibration));
+      setIsCalibrated(true);
+    } else {
+      setShowCalibrationModal(true);
+    }
+  }, []);
 
   useEffect(() => {
     // Keep display target in sync with active phoneme unless we are actively gliding
@@ -131,8 +155,12 @@ export function PronunciationCoach() {
   } | null>(null);
 
   // Current estimated formants (simulated or debug)
-  const [currentF1, setCurrentF1] = useState(500);
-  const [currentF2, setCurrentF2] = useState(1500);
+  // We use refs instead of state for high-frequency updates from AudioWorklet
+  // to avoid re-rendering the whole React tree at 60fps.
+  const currentF1Ref = useRef(500);
+  const currentF2Ref = useRef(1500);
+  const [debugF1, setDebugF1] = useState(500);
+  const [debugF2, setDebugF2] = useState(1500);
 
   // Gamification state
   const [score, setScore] = useState(0);
@@ -154,7 +182,7 @@ export function PronunciationCoach() {
     return synthAudioCtxRef.current;
   };
 
-  const playChime = () => {
+  const playChime = useCallback(() => {
     try {
       const audioCtx = getSynthAudioContext();
       const oscillator = audioCtx.createOscillator();
@@ -175,7 +203,7 @@ export function PronunciationCoach() {
     } catch (e) {
       console.error("Could not play chime", e);
     }
-  };
+  }, []);
 
   const startGlideMode = () => {
     if (isGlideMode || isRecording) return;
@@ -244,13 +272,13 @@ export function PronunciationCoach() {
       if (progress < 1) {
         // Simple bell curve easing for entering and exiting the sound
         const factor = Math.sin(progress * Math.PI);
-        setCurrentF1(500 + (activePhoneme.f1 - 500) * factor);
-        setCurrentF2(1500 + (activePhoneme.f2 - 1500) * factor);
+        currentF1Ref.current = 500 + (activePhoneme.f1 - 500) * factor;
+        currentF2Ref.current = 1500 + (activePhoneme.f2 - 1500) * factor;
         requestAnimationFrame(animate);
       } else {
         setIsPlayingNative(false);
-        setCurrentF1(500);
-        setCurrentF2(1500);
+        currentF1Ref.current = 500;
+        currentF2Ref.current = 1500;
       }
     };
 
@@ -258,16 +286,11 @@ export function PronunciationCoach() {
   };
 
   // Gamification Loop - Score and Active Time tracking
-  // We use Refs for currentF1 and currentF2 to avoid constantly re-running the effect
-  const f1Ref = useRef(currentF1);
-  const f2Ref = useRef(currentF2);
   const displayTargetRef = useRef(displayTarget);
 
   useEffect(() => {
-    f1Ref.current = currentF1;
-    f2Ref.current = currentF2;
     displayTargetRef.current = displayTarget;
-  }, [currentF1, currentF2, displayTarget]);
+  }, [displayTarget]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -285,8 +308,8 @@ export function PronunciationCoach() {
         });
 
         const currentTarget = displayTargetRef.current;
-        const f1Diff = f1Ref.current - currentTarget.f1;
-        const f2Diff = f2Ref.current - currentTarget.f2;
+        const f1Diff = currentF1Ref.current - currentTarget.f1;
+        const f2Diff = currentF2Ref.current - currentTarget.f2;
         const threshold = 150;
 
         const isTargetHit = Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5;
@@ -313,20 +336,29 @@ export function PronunciationCoach() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRecording, isSpeaking, debugMode, isPlayingNative]);
+  }, [isRecording, isSpeaking, debugMode, isPlayingNative, displayTarget.f1, displayTarget.f2, playChime]);
 
 
   useEffect(() => {
     if (isPlayingNative) return; // Ignore input while playing example
 
+    if (debugMode) {
+      // Sync debug state to refs so charts update
+      currentF1Ref.current = debugF1;
+      currentF2Ref.current = debugF2;
+    }
+
     if (!isRecording || debugMode) {
       if (!isRecording && !debugMode) {
-        // Drift back to neutral position when not recording or debugging
-        const drift = setInterval(() => {
-          setCurrentF1(prev => prev * 0.95 + 500 * 0.05);
-          setCurrentF2(prev => prev * 0.95 + 1500 * 0.05);
-        }, 50);
-        return () => clearInterval(drift);
+        // Drift back to neutral position when completely idle
+        let driftId: number;
+        const drift = () => {
+          currentF1Ref.current = currentF1Ref.current * 0.95 + 500 * 0.05;
+          currentF2Ref.current = currentF2Ref.current * 0.95 + 1500 * 0.05;
+          driftId = requestAnimationFrame(drift);
+        };
+        driftId = requestAnimationFrame(drift);
+        return () => cancelAnimationFrame(driftId);
       }
       return;
     }
@@ -334,16 +366,33 @@ export function PronunciationCoach() {
     if (workletNodeRef.current) {
       workletNodeRef.current.port.onmessage = (event) => {
         if (isPlayingNative) return; // Block input if example playing
+        // Worklet now sends f1/f2 drifting to neutral even when not speaking
         const { isSpeaking, f1, f2, volume } = event.data;
         setIsSpeaking(isSpeaking);
+        isSpeakingRef.current = isSpeaking;
 
-        if (isSpeaking) {
-          setCurrentF1(f1);
-          setCurrentF2(f2);
+        // Normalize raw f1/f2 based on user calibration limits
+        // If they are calibrating, we use raw values to record.
+        if (calibrationPhase !== 'idle') {
+          currentF1Ref.current = f1;
+          currentF2Ref.current = f2;
         } else {
-          // Drift back to neutral position if quiet
-          setCurrentF1(prev => prev * 0.95 + 500 * 0.05);
-          setCurrentF2(prev => prev * 0.95 + 1500 * 0.05);
+          // Normalization logic: scale worklet freq to standard UI mapping freq
+          // Map their 'ahh' F1 to the standard max F1 (800)
+          // Map their 'eee' F1 to the standard min F1 (300)
+          const rangeF1User = Math.max(1, userCalibration.ahh.f1 - userCalibration.eee.f1);
+          const rangeF1Std = 800 - 300;
+          const normalizedF1 = 300 + ((f1 - userCalibration.eee.f1) / rangeF1User) * rangeF1Std;
+
+          // Map their 'eee' F2 to the standard max F2 (2200)
+          // Map their 'ahh' F2 to the standard min F2 (1200)
+          const rangeF2User = Math.max(1, userCalibration.eee.f2 - userCalibration.ahh.f2);
+          const rangeF2Std = 2200 - 1200;
+          const normalizedF2 = 1200 + ((f2 - userCalibration.ahh.f2) / rangeF2User) * rangeF2Std;
+
+          // We clamp it loosely so they can still miss the target
+          currentF1Ref.current = Math.max(200, Math.min(1000, normalizedF1));
+          currentF2Ref.current = Math.max(600, Math.min(2500, normalizedF2));
         }
       };
     }
@@ -353,7 +402,7 @@ export function PronunciationCoach() {
         workletNodeRef.current.port.onmessage = null;
       }
     };
-  }, [isRecording, debugMode, isPlayingNative]);
+  }, [isRecording, debugMode, isPlayingNative, calibrationPhase, userCalibration.ahh.f1, userCalibration.ahh.f2, userCalibration.eee.f1, userCalibration.eee.f2, debugF1, debugF2]);
 
   // Generate real-time feedback based on current formants vs target
   let feedback = 'Press record and speak the word to start practicing.';
@@ -361,8 +410,8 @@ export function PronunciationCoach() {
   if (isGlideMode) {
     feedback = 'Start with the neutral "uh" sound, and slowly follow the ghost tongue to the target position.';
   } else if (debugMode) {
-    const f1Diff = currentF1 - displayTarget.f1;
-    const f2Diff = currentF2 - displayTarget.f2;
+    const f1Diff = debugF1 - displayTarget.f1;
+    const f2Diff = debugF2 - displayTarget.f2;
     const threshold = 100;
     if (Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5) {
       feedback = 'Excellent! Hold that position.';
@@ -379,8 +428,12 @@ export function PronunciationCoach() {
     if (!isSpeaking) {
       feedback = 'Listening... Speak the target word clearly.';
     } else {
-      const f1Diff = currentF1 - displayTarget.f1;
-      const f2Diff = currentF2 - displayTarget.f2;
+      // For real-time, feedback might be slightly delayed since we don't have currentF1 state.
+      // We will rely on visual feedback (green/red) inside the components which read the refs,
+      // and maybe occasionally poll the ref for text feedback.
+      // For now, we calculate text feedback based on current ref.
+      const f1Diff = currentF1Ref.current - displayTarget.f1;
+      const f2Diff = currentF2Ref.current - displayTarget.f2;
       const threshold = 150; // Slightly wider threshold for real audio
       
       if (Math.abs(f1Diff) < threshold && Math.abs(f2Diff) < threshold * 1.5) {
@@ -397,7 +450,7 @@ export function PronunciationCoach() {
     }
   }
 
-  const startRecording = async () => {
+  const startRecording = async (mode: 'practice' | 'calibration' = 'practice') => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setMediaStream(stream);
@@ -415,36 +468,41 @@ export function PronunciationCoach() {
       workletNodeRef.current = workletNode;
       sourceRef.current = source;
 
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      audioChunksRef.current = [];
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        // Clean up audio context
-        if (workletNodeRef.current) {
-          workletNodeRef.current.port.onmessage = null;
-          workletNodeRef.current.disconnect();
-        }
-        if (sourceRef.current) sourceRef.current.disconnect();
-        if (audioCtxRef.current) audioCtxRef.current.close();
-        
-        const mimeType = recorder.mimeType || 'audio/webm';
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        
-        stream.getTracks().forEach(track => track.stop());
-        setMediaStream(null);
-        setIsSpeaking(false);
-        
-        await analyzeWithGemini(audioBlob, mimeType);
-      };
-
-      recorder.start();
       setIsRecording(true);
-      setAiResult(null);
+
+      if (mode === 'practice') {
+        const recorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+        audioChunksRef.current = [];
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        };
+
+        recorder.onstop = async () => {
+          // Clean up audio context
+          if (workletNodeRef.current) {
+            workletNodeRef.current.port.onmessage = null;
+            workletNodeRef.current.disconnect();
+          }
+          if (sourceRef.current) sourceRef.current.disconnect();
+          if (audioCtxRef.current) audioCtxRef.current.close();
+
+          const mimeType = recorder.mimeType || 'audio/webm';
+          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+
+          stream.getTracks().forEach(track => track.stop());
+          setMediaStream(null);
+          setIsSpeaking(false);
+        isSpeakingRef.current = false;
+
+          await analyzeWithGemini(audioBlob, mimeType);
+        };
+
+        recorder.start();
+        setAiResult(null);
+      }
     } catch (err) {
       console.error("Error accessing microphone:", err);
       alert("Could not access microphone. Please ensure permissions are granted.");
@@ -454,8 +512,27 @@ export function PronunciationCoach() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
     }
+
+    // Cleanup if not using media recorder (like calibration phase), or if we need to force cleanup
+    // We use a functional state update to guarantee we access the latest mediaStream even in a closure.
+    setMediaStream(currentStream => {
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+      }
+      return null;
+    });
+
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.onmessage = null;
+      workletNodeRef.current.disconnect();
+    }
+    if (sourceRef.current) sourceRef.current.disconnect();
+    if (audioCtxRef.current) audioCtxRef.current.close();
+
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    setIsRecording(false);
   };
 
   const analyzeWithGemini = async (blob: Blob, mimeType: string) => {
@@ -612,8 +689,92 @@ export function PronunciationCoach() {
     }
   };
 
+  const startCalibration = async () => {
+    setCalibrationPhase('recording_ahh');
+    await startRecording('calibration');
+
+    // Record 'Ahh' for 3 seconds
+    let ahhSamples = { f1: [] as number[], f2: [] as number[] };
+    let interval = setInterval(() => {
+        if (isSpeakingRef.current) {
+           ahhSamples.f1.push(currentF1Ref.current);
+           ahhSamples.f2.push(currentF2Ref.current);
+        }
+    }, 100);
+
+    setTimeout(() => {
+      clearInterval(interval);
+      const avgAhhF1 = ahhSamples.f1.reduce((a,b)=>a+b, 0) / (ahhSamples.f1.length || 1);
+      const avgAhhF2 = ahhSamples.f2.reduce((a,b)=>a+b, 0) / (ahhSamples.f2.length || 1);
+
+      setUserCalibration(prev => ({ ...prev, ahh: { f1: avgAhhF1 || 800, f2: avgAhhF2 || 1200 } }));
+      setCalibrationPhase('recording_eee');
+
+      // Record 'Eee' for 3 seconds
+      let eeeSamples = { f1: [] as number[], f2: [] as number[] };
+      interval = setInterval(() => {
+          if (isSpeakingRef.current) {
+             eeeSamples.f1.push(currentF1Ref.current);
+             eeeSamples.f2.push(currentF2Ref.current);
+          }
+      }, 100);
+
+      setTimeout(() => {
+        clearInterval(interval);
+        const avgEeeF1 = eeeSamples.f1.reduce((a,b)=>a+b, 0) / (eeeSamples.f1.length || 1);
+        const avgEeeF2 = eeeSamples.f2.reduce((a,b)=>a+b, 0) / (eeeSamples.f2.length || 1);
+
+        const finalCalibration = {
+            ahh: { f1: avgAhhF1 || 800, f2: avgAhhF2 || 1200 },
+            eee: { f1: avgEeeF1 || 300, f2: avgEeeF2 || 2200 }
+        };
+
+        setUserCalibration(finalCalibration);
+        localStorage.setItem('vocal_calibration', JSON.stringify(finalCalibration));
+
+        stopRecording();
+        setCalibrationPhase('idle');
+        setIsCalibrated(true);
+        setShowCalibrationModal(false);
+
+      }, 3000);
+    }, 3000);
+  };
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 relative">
+      {/* Calibration Modal Overlay */}
+      {showCalibrationModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm rounded-3xl">
+           <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">Vocal Calibration</h2>
+              <p className="text-slate-600 mb-6 text-sm">Everyone&apos;s vocal tract is different! Let&apos;s map your voice to ensure accurate feedback.</p>
+
+              {calibrationPhase === 'idle' && (
+                <button
+                  onClick={startCalibration}
+                  className="w-full py-3 bg-indigo-600 text-white rounded-xl font-medium shadow-md hover:bg-indigo-700 transition"
+                >
+                  Start Calibration
+                </button>
+              )}
+
+              {calibrationPhase === 'recording_ahh' && (
+                <div className="animate-pulse">
+                   <div className="text-4xl font-serif text-amber-500 mb-4">/ɑ/</div>
+                   <p className="font-medium text-slate-700">Say &quot;AHH&quot; like at the doctor...</p>
+                </div>
+              )}
+
+              {calibrationPhase === 'recording_eee' && (
+                <div className="animate-pulse">
+                   <div className="text-4xl font-serif text-emerald-500 mb-4">/i/</div>
+                   <p className="font-medium text-slate-700">Say &quot;EEE&quot; like in cheese...</p>
+                </div>
+              )}
+           </div>
+        </div>
+      )}
       {/* Left Column: Controls & Target */}
       <div className="lg:col-span-4 space-y-6">
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
@@ -698,75 +859,100 @@ export function PronunciationCoach() {
             </p>
           </div>
 
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider">Minimal Pairs Library</h3>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {MINIMAL_PAIRS.map(pair => (
-                <button
-                  key={pair.id}
-                  onClick={() => {
-                    setActivePair(pair);
-                    setActivePhoneme(pair.phonemes[0]);
-                  }}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                    activePair.id === pair.id 
-                      ? 'bg-slate-800 text-white' 
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {pair.label}
-                </button>
-              ))}
-            </div>
+          <div className="space-y-2">
+            <button
+              onClick={() => setIsLibraryOpen(!isLibraryOpen)}
+              className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 rounded-xl transition border border-slate-100"
+            >
+              <h3 className="text-sm font-medium text-slate-600 uppercase tracking-wider">Phoneme Library & Custom Words</h3>
+              {isLibraryOpen ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+            </button>
 
-            <div className="grid grid-cols-2 gap-2">
-              {activePair.phonemes.map(p => (
-                <button
-                  key={p.symbol}
-                  onClick={() => {
-                    setActivePhoneme(p);
-                    setCustomWordData(null); // Clear custom data when picking a standard pair
-                    if (!isRecording && !debugMode) {
-                      setCurrentF1(p.f1 + (Math.random() > 0.5 ? 200 : -200));
-                      setCurrentF2(p.f2 + (Math.random() > 0.5 ? 400 : -400));
-                    }
-                  }}
-                  className={`py-3 rounded-xl font-serif text-xl transition-all ${
-                    activePhoneme.symbol === p.symbol 
-                      ? 'bg-indigo-600 text-white shadow-md' 
-                      : 'bg-white border border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50'
-                  }`}
+            <AnimatePresence>
+              {isLibraryOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
                 >
-                  /{p.symbol}/
-                </button>
-              ))}
-            </div>
+                  <div className="p-4 bg-white border border-slate-100 rounded-xl mt-2 space-y-4 shadow-inner">
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {MINIMAL_PAIRS.map(pair => (
+                        <button
+                          key={pair.id}
+                          onClick={() => {
+                            setActivePair(pair);
+                            setActivePhoneme(pair.phonemes[0]);
+                          }}
+                          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                            activePair.id === pair.id
+                              ? 'bg-slate-800 text-white'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {pair.label}
+                        </button>
+                      ))}
+                    </div>
 
-            {/* Custom Word Entry */}
-            <div className="mt-6 border-t border-slate-100 pt-6">
-              <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-3">Or Analyze a Custom Word</h3>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. phenomenal"
-                  value={customWord}
-                  onChange={(e) => setCustomWord(e.target.value)}
-                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  onKeyDown={(e) => e.key === 'Enter' && analyzeCustomWord()}
-                />
-                <button
-                  onClick={analyzeCustomWord}
-                  disabled={isAnalyzingCustomWord || !customWord.trim()}
-                  className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-900 disabled:opacity-50 flex items-center justify-center min-w-[80px]"
-                >
-                  {isAnalyzingCustomWord ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Analyze'}
-                </button>
-              </div>
-            </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {activePair.phonemes.map(p => (
+                        <button
+                          key={p.symbol}
+                          onClick={() => {
+                            setActivePhoneme(p);
+                            setCustomWordData(null); // Clear custom data when picking a standard pair
+                            if (!isRecording && !debugMode) {
+                            currentF1Ref.current = p.f1 + (Math.random() > 0.5 ? 200 : -200);
+                            currentF2Ref.current = p.f2 + (Math.random() > 0.5 ? 400 : -400);
+                            }
+                            setIsLibraryOpen(false); // Auto-close on selection
+                          }}
+                          className={`py-3 rounded-xl font-serif text-xl transition-all ${
+                            activePhoneme.symbol === p.symbol
+                              ? 'bg-indigo-600 text-white shadow-md'
+                              : 'bg-white border border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50'
+                          }`}
+                        >
+                          /{p.symbol}/
+                        </button>
+                      ))}
+                    </div>
 
-            {/* Syllable and Intonation Display for Custom Word */}
+                    {/* Custom Word Entry */}
+                    <div className="mt-4 border-t border-slate-100 pt-4">
+                      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Analyze Custom Word</h3>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="e.g. phenomenal"
+                          value={customWord}
+                          onChange={(e) => setCustomWord(e.target.value)}
+                          className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          onKeyDown={(e) => e.key === 'Enter' && analyzeCustomWord()}
+                        />
+                        <button
+                          onClick={analyzeCustomWord}
+                          disabled={isAnalyzingCustomWord || !customWord.trim()}
+                          className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-900 disabled:opacity-50 flex items-center justify-center min-w-[80px]"
+                        >
+                          {isAnalyzingCustomWord ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Analyze'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Syllable and Intonation Display for Custom Word (always visible if active) */}
             {customWordData && (
-              <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200"
+              >
                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Structure & Rhythm</h4>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {customWordData.syllables.map((syl, i) => (
@@ -787,7 +973,7 @@ export function PronunciationCoach() {
                     <Volume2 className="w-4 h-4" />
                   </button>
                 </div>
-              </div>
+              </motion.div>
             )}
           </div>
         </div>
@@ -796,7 +982,7 @@ export function PronunciationCoach() {
           <h2 className="text-lg font-semibold text-slate-800 mb-4">Practice</h2>
           
           <button
-            onClick={isRecording ? stopRecording : startRecording}
+            onClick={isRecording ? stopRecording : () => startRecording('practice')}
             disabled={isAnalyzing}
             className={`w-full py-4 rounded-xl flex items-center justify-center gap-3 font-medium text-lg transition-all ${
               isRecording 
@@ -839,22 +1025,22 @@ export function PronunciationCoach() {
               <div>
                 <label className="text-xs font-medium text-amber-700 flex justify-between">
                   <span>F1 (Jaw Height)</span>
-                  <span>{Math.round(currentF1)} Hz</span>
+                  <span>{Math.round(debugF1)} Hz</span>
                 </label>
                 <input 
                   type="range" min="200" max="1000" 
-                  value={currentF1} onChange={e => setCurrentF1(Number(e.target.value))}
+                  value={debugF1} onChange={e => setDebugF1(Number(e.target.value))}
                   className="w-full accent-amber-600"
                 />
               </div>
               <div>
                 <label className="text-xs font-medium text-amber-700 flex justify-between">
                   <span>F2 (Tongue Backness)</span>
-                  <span>{Math.round(currentF2)} Hz</span>
+                  <span>{Math.round(debugF2)} Hz</span>
                 </label>
                 <input 
                   type="range" min="600" max="2500" 
-                  value={currentF2} onChange={e => setCurrentF2(Number(e.target.value))}
+                  value={debugF2} onChange={e => setDebugF2(Number(e.target.value))}
                   className="w-full accent-amber-600"
                 />
               </div>
@@ -910,8 +1096,8 @@ export function PronunciationCoach() {
             <h2 className="text-lg font-semibold text-slate-800 mb-4">2D Cross-Section</h2>
             <div className="flex-1 min-h-[300px] relative flex items-center justify-center bg-slate-50 rounded-xl overflow-hidden border border-slate-100">
               <VocalTract2D
-                f1={currentF1}
-                f2={currentF2}
+                f1Ref={currentF1Ref}
+                f2Ref={currentF2Ref}
                 targetF1={displayTarget.f1}
                 targetF2={displayTarget.f2}
                 isActive={isRecording || debugMode || isPlayingNative}
@@ -927,8 +1113,8 @@ export function PronunciationCoach() {
             <h2 className="text-lg font-semibold text-slate-800 mb-4">3D Articulatory Mesh</h2>
             <div className="flex-1 min-h-[300px] relative flex items-center justify-center bg-slate-50 rounded-xl overflow-hidden border border-slate-100">
               <VocalTract 
-                f1={currentF1} 
-                f2={currentF2} 
+                f1Ref={currentF1Ref}
+                f2Ref={currentF2Ref}
                 targetF1={displayTarget.f1}
                 targetF2={displayTarget.f2}
                 isActive={isRecording || debugMode || isPlayingNative}
@@ -946,8 +1132,8 @@ export function PronunciationCoach() {
               <VowelQuadrilateral
                 targetF1={displayTarget.f1}
                 targetF2={displayTarget.f2}
-                currentF1={currentF1}
-                currentF2={currentF2}
+                f1Ref={currentF1Ref}
+                f2Ref={currentF2Ref}
                 isActive={isRecording || debugMode || isPlayingNative}
               />
             </div>
