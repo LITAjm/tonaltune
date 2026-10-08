@@ -1,0 +1,17 @@
+- **2026-09-29 18:11** [investigation] Starting deep dive into git history and current codebase for vocalization visualization
+- **2026-09-29 18:17** [feature] Implementing robust real-time audio formant extraction and enhanced 3D/2D visualizers
+- **2026-09-29 18:20** [feature] Completed deep dive, fixed real-time formant extraction engine, and elevated 3D/2D visualizers to production quality
+- **2026-09-29 23:59** [audit] Deep auditing codebase for lazy shortcuts, fake audio implementations, and geometric shortcomings
+- **2026-09-29 23:59** [feature] Starting comprehensive rewrite: Web Audio Klatt formant synth, volumetric 3D tongue kinematics, pitch detection, and phonetic engine
+- **2026-09-30 00:03** [feature] Designing interactive 3D contact highlight system, full consonant/stop/fricative engine, and past-tense -ed library
+- **2026-09-30 00:05** [complete] Completed production verification for dental fricatives, stops, past-tense -ed rules, and 3D contact spots
+- **2026-09-30 12:16** [server] Dev server verified running at http://localhost:3000 with live OpenRouter & Gemini API endpoints confirmed
+- **2026-09-30 12:22** [architecture] Refactoring evaluation pipeline to fully client-side acoustic scoring and OpenRouter Z-AI, eliminating Gemini dependency
+- **2026-09-30 12:25** [feature] Implementing System Audio / Tab Audio capture (getDisplayMedia), device selector, and student audio file analysis
+- **2026-09-30 12:36** [complete] Verified production build and live server with client-side acoustic scoring, multi-source system audio input (Zoom/Meet), and zero Gemini dependency
+- **2026-09-30 15:53** [bugfix] Fixed Tailwind CSS v4 PostCSS compilation, verified clean CSS bundle (HTTP 200 46KB), and confirmed dev server running on port 3000
+- **2026-09-30 15:57** [bugfix] Added resilient getUserMedia constraints fallback, graceful permission handling, and fail-safe recording evaluation
+- **2026-09-30 16:01** [layout] Refactoring application layout to full-screen cockpit dashboard, eliminating abstract vowel trapezoid in favor of large 3D and 2D visualizers with zero vertical cutoff
+- **2026-09-30 16:03** [frontend] Checking pronunciation-coach.tsx state to finalize full-screen layout
+- **2026-09-30 16:06** [frontend] Implemented full-screen cockpit layout, lifelike 3D vocal tract with illuminated contact zones, multi-input audio capture, and removed quadrilateral
+- **2026-09-30 16:16** [devserver] Cleaned dev server cache, removed microphone dropdown clutter, and verified clean 200 HTTP response

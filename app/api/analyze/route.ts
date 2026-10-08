@@ -60,7 +60,11 @@ export async function POST(req: Request) {
 
     const data = await response.json();
     if (data.choices && data.choices[0] && data.choices[0].message) {
-      const result = JSON.parse(data.choices[0].message.content);
+      let content = data.choices[0].message.content.trim();
+      if (content.startsWith('```')) {
+        content = content.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
+      }
+      const result = JSON.parse(content);
       return NextResponse.json(result);
     } else {
       return NextResponse.json({ error: 'Invalid response from AI' }, { status: 500 });
